@@ -1,0 +1,9 @@
+dataset/
+output/*
+!output/hyperparams.csv
+__pycache__/
+*.pyc
+.Rhistory
+.RData
+.Rproj.user/
+PRIVATE_*
