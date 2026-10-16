@@ -7,3 +7,4 @@ __pycache__/
 .RData
 .Rproj.user/
 PRIVATE_*
+files/Analysis_files/
