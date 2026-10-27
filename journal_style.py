@@ -4,15 +4,23 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 # --------------------------------------------------------------------------- #
-# Journal of Pest Science artwork settings
+# Journal of Economic Entomology artwork settings
 # --------------------------------------------------------------------------- #
 MM = 1.0 / 25.4
-FULL_MM = 174.0
-HALF_MM = 84.0
-MAX_H_MM = 234.0
+FULL_MM = 170.0
+HALF_MM = 82.0
+MAX_H_MM = 240.0
 PNG_DPI = 600
-DEFAULT_FORMATS = tuple(f.strip() for f in os.environ.get("JPS_FORMATS", "pdf,png,svg").split(",")
+TIFF_DPI = 1200
+PANEL_LETTERS = "ABCDEFGH"
+DEFAULT_FORMATS = tuple(f.strip() for f in os.environ.get("FIG_FORMATS", "png,tif").split(",")
                         if f.strip())
+COLOR_MODE = os.environ.get("FIG_COLOR", "cmyk").strip().lower()
+CMYK_ICC_CANDIDATES = [
+    os.environ.get("FIG_CMYK_ICC", ""),
+    os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                 "System32", "spool", "drivers", "color", "RSWOP.icm"),
+]
 
 
 def apply_style(base_pt=8.5):
@@ -88,6 +96,54 @@ def add_row_labels(fig, pairs, fontsize=9.0, gap_mm=1.6):
 # --------------------------------------------------------------------------- #
 # Export
 # --------------------------------------------------------------------------- #
+def _has_transparency(fig):
+    for art in fig.findobj():
+        a = getattr(art, "get_alpha", lambda: None)()
+        if a is not None and a < 1.0:
+            return True
+    return False
+
+
+def _to_cmyk(img):
+    from PIL import ImageCms
+    for prof in CMYK_ICC_CANDIDATES:
+        if prof and os.path.isfile(prof):
+            out = ImageCms.profileToProfile(img, ImageCms.createProfile("sRGB"),
+                                            ImageCms.getOpenProfile(prof), outputMode="CMYK",
+                                            renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC)
+            with open(prof, "rb") as fh:
+                return out, fh.read()
+    return img.convert("CMYK"), None
+
+
+def _finalize_tiff(path):
+    from PIL import Image
+    with Image.open(path) as im:
+        im.load()
+        if im.mode in ("RGBA", "LA", "PA"):
+            im = im.convert("RGBA")
+            flat = Image.new("RGB", im.size, "white")
+            flat.paste(im, mask=im.split()[-1])
+        else:
+            flat = im.convert("RGB")
+    icc = None
+    if COLOR_MODE == "cmyk":
+        flat, icc = _to_cmyk(flat)
+    kw = {"compression": "tiff_lzw", "dpi": (TIFF_DPI, TIFF_DPI)}
+    if icc:
+        kw["icc_profile"] = icc
+    flat.save(path, **kw)
+
+
+def png_to_tiff(src, dst=None):
+    from PIL import Image
+    dst = dst or os.path.splitext(src)[0] + ".tif"
+    with Image.open(src) as im:
+        im.save(dst, compression="tiff_lzw")
+    _finalize_tiff(dst)
+    return dst
+
+
 def save_journal(stem, slug, outdir, fig=None, formats=None, tight=True):
     fig = fig or plt.gcf()
     formats = DEFAULT_FORMATS if formats is None else formats
@@ -97,12 +153,27 @@ def save_journal(stem, slug, outdir, fig=None, formats=None, tight=True):
             fig.tight_layout()
         except Exception:
             pass
+    if "eps" in formats and _has_transparency(fig):
+        formats = tuple(f for f in formats if f != "eps")
     for ext in formats:
         if ext == "png":
             fig.savefig(os.path.join(outdir, f"{stem}_{slug}.png"), dpi=PNG_DPI, bbox_inches=None)
+        elif ext in ("tif", "tiff"):
+            path = os.path.join(outdir, f"{stem}.tif")
+            fig.savefig(path, dpi=TIFF_DPI, bbox_inches=None,
+                        pil_kwargs={"compression": "tiff_lzw"})
+            _finalize_tiff(path)
+        elif ext == "eps":
+            fig.savefig(os.path.join(outdir, f"{stem}.eps"), format="eps", bbox_inches=None)
         elif ext == "pdf":
             fig.savefig(os.path.join(outdir, f"{stem}.pdf"), format="pdf", bbox_inches=None)
         elif ext == "svg":
             fig.savefig(os.path.join(outdir, f"{stem}.svg"), format="svg", bbox_inches=None,
                         metadata={"Date": None})
     plt.close(fig)
+
+
+if __name__ == "__main__":
+    import sys
+    for f in sys.argv[1:]:
+        png_to_tiff(f)
