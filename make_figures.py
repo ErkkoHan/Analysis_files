@@ -184,7 +184,7 @@ def fig2_transition():
     fig.canvas.draw()
     rend = fig.canvas.get_renderer()
     inv = fig.transFigure.inverted()
-    panels = [[(ax0, "a"), (ax1, "b")], [(ax2, "c"), (ax3, "d")]]
+    panels = [[(ax0, "A"), (ax1, "B")], [(ax2, "C"), (ax3, "D")]]
     bbs = [[ax.get_tightbbox(rend).transformed(inv) for ax, _ in row] for row in panels]
     y_top = [max(bb.y1 for bb in row) for row in bbs]
     x_left = [max(min(bbs[r][c].x0 for r in range(2)) - 0.022, 0.004) for c in range(2)]
@@ -236,7 +236,7 @@ def fig3_persistence_vs_prediction():
     nrow, ncol = len(targets), len(models)
     fig, axes = plt.subplots(nrow, ncol, squeeze=False,
                              figsize=size("full", height_mm=rows_height_mm(nrow, 46.0, extra_mm=3.0)))
-    letters = "abcdefgh"
+    letters = "ABCDEFGH"
     row_labels = []
     for i, (t, color, row_title) in enumerate(targets):
         for j, (mname, short_lab) in enumerate(models):
@@ -336,7 +336,7 @@ def fig4_importance():
         ax.set_xlabel(r"Permutation importance ($\Delta R^2$)", fontsize=PT_LABEL)
         if i == 0:
             ax.legend(loc="lower right", fontsize=PT_TICK, framealpha=1.0)
-        ax.text(-0.30, 1.05, "ab"[i], transform=ax.transAxes, fontsize=PT_PANEL,
+        ax.text(-0.30, 1.05, "AB"[i], transform=ax.transAxes, fontsize=PT_PANEL,
                 fontweight="bold", color="black", va="bottom", ha="left")
     save_journal("Fig4", "importance", OUT)
 
@@ -392,7 +392,7 @@ def fig5_horizon():
                 ax.set_ylabel("Test-set $R^2$", fontsize=PT_LABEL)
             if i == 0:
                 ax.set_title(MODEL_DISPLAY.get(model, model), fontsize=PT_TITLE)
-            ax.text(-0.22, 1.05, "abcdef"[i * ncol + j], transform=ax.transAxes,
+            ax.text(-0.22, 1.05, "ABCDEF"[i * ncol + j], transform=ax.transAxes,
                     fontsize=PT_PANEL, fontweight="bold", color="black", va="bottom", ha="left")
             ax.grid(axis="y", color=GREYL, lw=0.5)
             ax.set_axisbelow(True)
