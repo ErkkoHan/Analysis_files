@@ -12,8 +12,8 @@ suppressPackageStartupMessages({
 })
 
 # ---- Settings ---------------------------------------------------------------- #
-WIDTH_MM  <- 59.2
-HEIGHT_MM <- 106.5
+WIDTH_MM  <- 57.8
+HEIGHT_MM <- 104.0
 DPI       <- 600
 BASE_PT   <- 8
 GRAT_STEP <- 0.5
