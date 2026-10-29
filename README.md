@@ -3,7 +3,7 @@
 Analysis code for the manuscript by Cheng-Hsuan Han, Sarah Wu and Yu-Syuan Luo on
 predicting German cockroach (*Blattella germanica*) activity and infestation escalation
 from routine trap monitoring in food-service establishments (submitted to *Journal of
-Pest Science*).
+Economic Entomology*).
 
 ## Data
 
