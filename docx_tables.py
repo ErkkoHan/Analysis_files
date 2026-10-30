@@ -171,8 +171,9 @@ def add_table(doc, *, label, caption, header, rows, widths,
 
     p = doc.add_paragraph()
     p.paragraph_format.space_after = Pt(5)
-    _runs(p, label, bold=True, size=TITLE_PT)
-    _runs(p, " " + caption, bold=False, size=TITLE_PT)
+    _runs(p, label.rstrip(".") + ".", bold=True, size=TITLE_PT)
+    cap = caption.rstrip()
+    _runs(p, " " + (cap if cap.endswith(".") else cap + "."), bold=False, size=TITLE_PT)
 
     ncol = len(widths)
     tbl = doc.add_table(rows=0, cols=ncol)

@@ -32,7 +32,7 @@ def table1_sample_characteristics(doc):
     train, test = time_split(common)
     groups = [train, test]
     cs = pd.concat([train, test], ignore_index=True)
-    mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    mon = ["Jan", "Feb", "Mar", "April", "May", "June", "July", "Aug", "Sept", "Oct", "Nov", "Dec"]
 
     def levels(col, ref, last=None):
         cnt = cs[col].value_counts()
@@ -103,11 +103,11 @@ def table1_sample_characteristics(doc):
                {"t": f"Test set\n(<i>n</i> = {len(test):,})"},
                {"t": "SMD"}]]
     notes = [
-        "Values are <i>n</i> (%) for categorical variables, mean ± SD for continuous variables.",
-        "<sup>a</sup> Median [interquartile range].",
-        "<sup>b</sup> Number (%) with ≥ 1 recorded deficiency.",
-        "RH, relative humidity; SD, standard deviation; SMD, absolute standardized mean "
-        "difference.",
+        "Values are <i>n</i> (%) for categorical variables and mean ± SD for continuous "
+        "variables. RH, relative humidity; SD, standard deviation; SMD, absolute standardized "
+        "mean difference.",
+        "<sup>a</sup>Median [interquartile range].",
+        "<sup>b</sup>Number (%) of periods with ≥ 1 recorded deficiency.",
     ]
     add_table(doc, label="Table 1",
               caption=f"Characteristics of the training and held-out test sets "
@@ -202,26 +202,30 @@ def table2_drivers(doc):
 
     mc = meta[meta.model.str.contains("capture")].iloc[0]
     mp = meta[meta.model.str.contains("posrate")].iloc[0]
-    rows.append(section("Random effect (establishment)", 7))
+    rows.append(section("Random effect and dispersion", 7))
     rows.append(body(["Intercept SD (<i>σ</i>)", f"{mc.sigma_u:.2f}", "—", "—",
                       f"{mp.sigma_u:.2f}", "—", "—"]))
     rows.append(body(["Intraclass correlation (ICC)", f"{mc.icc:.2f}", "—", "—",
                       f"{mp.icc:.2f}", "—", "—"]))
+    rows.append(body(["Tweedie power parameter", f"{mc.tweedie_p:.2f}", "—", "—",
+                      "—", "—", "—"]))
+    rows.append(body(["Dispersion parameter (<i>φ</i>)", f"{mc.phi:.3f}", "—", "—",
+                      "—", "—", "—"]))
 
     header = [
         [{"t": "Predictor", "align": "l", "vmerge": True},
          {"t": "Capture rate<sup>a</sup>", "span": 3, "rule": True},
          {"t": "Positive rate<sup>b</sup>", "span": 3, "rule": True}],
         [{"t": ""},
-         {"t": "<i>β</i>"}, {"t": "exp(<i>β</i>) (95% CI)"}, {"t": "<i>p</i>"},
-         {"t": "<i>β</i>"}, {"t": "exp(<i>β</i>) (95% CI)"}, {"t": "<i>p</i>"}],
+         {"t": "<i>β</i>"}, {"t": "exp(<i>β</i>) (95% CI)"}, {"t": "<i>P</i>"},
+         {"t": "<i>β</i>"}, {"t": "exp(<i>β</i>) (95% CI)"}, {"t": "<i>P</i>"}],
     ]
     notes = [
-        "Bold values and * indicate <i>p</i> < 0.05 (unadjusted).",
-        "<sup>a</sup> Tweedie, log link; exp(<i>β</i>), ratio of means.",
-        "<sup>b</sup> Binomial, logit link; exp(<i>β</i>), odds ratio.",
-        "CI, confidence interval; ref, reference category; RH, relative humidity; "
-        "SD, standard deviation.",
+        "Bold values and * indicate <i>P</i> < 0.05 (unadjusted). CI, confidence interval; "
+        "ICC, intraclass correlation coefficient; ref, reference category; RH, relative "
+        "humidity; SD, standard deviation.",
+        "<sup>a</sup>Tweedie, log link; exp(<i>β</i>), ratio of means.",
+        "<sup>b</sup>Binomial, logit link; exp(<i>β</i>), odds ratio.",
     ]
     add_table(doc, label="Table 2",
               caption=f"Factors associated with next-period cockroach activity in generalized "
@@ -282,9 +286,9 @@ def table3_regression(doc):
     n_test = int(((pr.target == "y_density") & (pr.model == NAIVE_KEY)).sum())
     notes = [
         "Bold values indicate the best performance among fitted models (naïve persistence "
-        "excluded).",
-        "<sup>a</sup> Mean of (predicted − observed); best, closest to 0.",
-        "GLM, generalized linear model; MAE, mean absolute error; RMSE, root mean squared error.",
+        "excluded). GLM, generalized linear model; MAE, mean absolute error; RMSE, root mean "
+        "squared error.",
+        "<sup>a</sup>Mean of (predicted − observed); best, closest to 0.",
     ]
     add_table(doc, label="Table 3",
               caption=f"Predictive performance of Baseline and Enhanced feature sets for "
@@ -357,9 +361,9 @@ def table4_classification(doc):
                {"t": "Specificity"}, {"t": "F1"}]]
     notes = [
         "Bold values indicate the best AUC, AUPRC and F1 among fitted models (naïve "
-        "persistence excluded).",
-        "AUC, area under the receiver operating characteristic curve; AUPRC, area under the "
-        "precision–recall curve; CI, confidence interval; GLM, generalized linear model.",
+        "persistence excluded). AUC, area under the receiver operating characteristic curve; "
+        "AUPRC, area under the precision–recall curve; CI, confidence interval; GLM, "
+        "generalized linear model.",
     ]
     doc.add_paragraph().paragraph_format.space_before = Pt(14)
     tbl = add_table(doc, label="Table 4",
