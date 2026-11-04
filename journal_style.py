@@ -4,18 +4,23 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 # --------------------------------------------------------------------------- #
-# Journal of Economic Entomology artwork settings
+# Pest Management Science artwork settings
+#   Initial submission: JPEG (EPS and PDF are not accepted)
+#   Revision: TIF or JPEG, one file per figure
+#   Resolution: >= 800 dpi for graphs and line drawings at final size
 # --------------------------------------------------------------------------- #
 MM = 1.0 / 25.4
 FULL_MM = 170.0
 HALF_MM = 82.0
 MAX_H_MM = 240.0
 PNG_DPI = 600
-TIFF_DPI = 1200
+SUBMIT_DPI = 800
+TIFF_DPI = SUBMIT_DPI          # kept for backward compatibility
+JPEG_QUALITY = 95
 PANEL_LETTERS = "ABCDEFGH"
-DEFAULT_FORMATS = tuple(f.strip() for f in os.environ.get("FIG_FORMATS", "png,tif").split(",")
+DEFAULT_FORMATS = tuple(f.strip() for f in os.environ.get("FIG_FORMATS", "png,jpg,tif").split(",")
                         if f.strip())
-COLOR_MODE = os.environ.get("FIG_COLOR", "cmyk").strip().lower()
+COLOR_MODE = os.environ.get("FIG_COLOR", "rgb").strip().lower()
 CMYK_ICC_CANDIDATES = [
     os.environ.get("FIG_CMYK_ICC", ""),
     os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
@@ -116,32 +121,57 @@ def _to_cmyk(img):
     return img.convert("CMYK"), None
 
 
-def _finalize_tiff(path):
+def _flatten_rgb(im):
+    from PIL import Image
+    im.load()
+    if im.mode in ("RGBA", "LA", "PA") or (im.mode == "P" and "transparency" in im.info):
+        im = im.convert("RGBA")
+        flat = Image.new("RGB", im.size, "white")
+        flat.paste(im, mask=im.split()[-1])
+        return flat
+    return im.convert("RGB")
+
+
+def _finalize_raster(path, dpi):
     from PIL import Image
     with Image.open(path) as im:
-        im.load()
-        if im.mode in ("RGBA", "LA", "PA"):
-            im = im.convert("RGBA")
-            flat = Image.new("RGB", im.size, "white")
-            flat.paste(im, mask=im.split()[-1])
-        else:
-            flat = im.convert("RGB")
+        flat = _flatten_rgb(im)
     icc = None
     if COLOR_MODE == "cmyk":
         flat, icc = _to_cmyk(flat)
-    kw = {"compression": "tiff_lzw", "dpi": (TIFF_DPI, TIFF_DPI)}
+    if os.path.splitext(path)[1].lower() in (".jpg", ".jpeg"):
+        kw = {"quality": JPEG_QUALITY, "subsampling": 0, "dpi": (dpi, dpi)}
+    else:
+        kw = {"compression": "tiff_lzw", "dpi": (dpi, dpi)}
     if icc:
         kw["icc_profile"] = icc
     flat.save(path, **kw)
 
 
-def png_to_tiff(src, dst=None):
+def png_to_submission(src, target_mm=FULL_MM, formats=("jpg", "tif")):
+    """Convert an externally exported PNG (e.g. Fig. 1) to JPEG and TIFF.
+
+    The dpi written to the file header is derived from the pixel width and the
+    final printed width, so the image is not resampled.
+    """
     from PIL import Image
-    dst = dst or os.path.splitext(src)[0] + ".tif"
+    stem = os.path.splitext(src)[0]
     with Image.open(src) as im:
-        im.save(dst, compression="tiff_lzw")
-    _finalize_tiff(dst)
-    return dst
+        base = _flatten_rgb(im)
+    dpi = int(round(base.size[0] * 25.4 / float(target_mm)))
+    written = []
+    for ext in formats:
+        dst = f"{stem}.{ext}"
+        if ext == "jpg":
+            base.save(dst, quality=JPEG_QUALITY, subsampling=0)
+        else:
+            base.save(dst, compression="tiff_lzw")
+        _finalize_raster(dst, dpi)
+        written.append(dst)
+    if dpi < SUBMIT_DPI:
+        print(f"Warning: {os.path.basename(src)} is {dpi} dpi at {target_mm:.0f} mm "
+              f"(< {SUBMIT_DPI} dpi).")
+    return written
 
 
 def save_journal(stem, slug, outdir, fig=None, formats=None, tight=True):
@@ -158,11 +188,16 @@ def save_journal(stem, slug, outdir, fig=None, formats=None, tight=True):
     for ext in formats:
         if ext == "png":
             fig.savefig(os.path.join(outdir, f"{stem}_{slug}.png"), dpi=PNG_DPI, bbox_inches=None)
+        elif ext in ("jpg", "jpeg"):
+            path = os.path.join(outdir, f"{stem}.jpg")
+            fig.savefig(path, dpi=SUBMIT_DPI, bbox_inches=None,
+                        pil_kwargs={"quality": JPEG_QUALITY, "subsampling": 0})
+            _finalize_raster(path, SUBMIT_DPI)
         elif ext in ("tif", "tiff"):
             path = os.path.join(outdir, f"{stem}.tif")
-            fig.savefig(path, dpi=TIFF_DPI, bbox_inches=None,
+            fig.savefig(path, dpi=SUBMIT_DPI, bbox_inches=None,
                         pil_kwargs={"compression": "tiff_lzw"})
-            _finalize_tiff(path)
+            _finalize_raster(path, SUBMIT_DPI)
         elif ext == "eps":
             fig.savefig(os.path.join(outdir, f"{stem}.eps"), format="eps", bbox_inches=None)
         elif ext == "pdf":
@@ -175,5 +210,9 @@ def save_journal(stem, slug, outdir, fig=None, formats=None, tight=True):
 
 if __name__ == "__main__":
     import sys
-    for f in sys.argv[1:]:
-        png_to_tiff(f)
+    args = sys.argv[1:]
+    width = FULL_MM
+    if len(args) >= 2 and args[0] == "--width-mm":
+        width, args = float(args[1]), args[2:]
+    for f in args:
+        png_to_submission(f, target_mm=width)
