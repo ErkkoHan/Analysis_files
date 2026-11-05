@@ -1,401 +1,128 @@
+import math
 import os
 
 import numpy as np
 import pandas as pd
-from docx.shared import Pt
 
-from docx_tables import add_table, new_document
-from features import FACILITY_ITEMS, ITEM_LABELS, SANITATION_ITEMS, build_features, time_split
-from make_figures import OUT, load, trans as tr
+from analysis_pipeline import get_common_sample
+from features import time_split
+from transition_quadrant import Q_DEFAULT, quadrant, thresholds
 
-NAIVE_KEY = "Naive persistence"
-NAIVE_LABEL = "Naïve persistence"
-MODEL_DISPLAY = {"Random Forest": "Random forest"}
-MINUS = "−"
-DAGGER, DDAGGER, SECT = "\u2020", "\u2021", "\u00a7"   # PMS table footnote symbols
-
-# Main text: Table 1 (prediction error), Table 2 (early warning).
-# Supporting Information: Table S5 (sample characteristics), Table S6 (GLMM).
-LABEL_REG, LABEL_CLS = "Table 1", "Table 2"
-LABEL_CHAR, LABEL_GLMM = "Table S5", "Table S6"
-
-
-def body(cells, indent=True, bold=False):
-    return {"cells": cells, "indent": indent, "bold": bold}
-
-
-def section(title, ncol):
-    return {"cells": [title] + [""] * (ncol - 1), "section": True}
+OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+MODELS = ["Naive persistence", "GLM", "Random Forest", "XGBoost"]
+FSETS = ["Baseline", "Enhanced"]
 
 
 # --------------------------------------------------------------------------- #
-# Table S5: training vs test set characteristics
+# Metrics
 # --------------------------------------------------------------------------- #
-def table1_sample_characteristics(doc):
-    df, tiers = build_features()
-    common = df.dropna(subset=[f for f in tiers["Enhanced"]
-                               if f not in ("region", "business", "building")])
-    train, test = time_split(common)
-    groups = [train, test]
-    cs = pd.concat([train, test], ignore_index=True)
-    mon = ["Jan", "Feb", "Mar", "April", "May", "June", "July", "Aug", "Sept", "Oct", "Nov", "Dec"]
+def _auc(y, score):
+    y = np.asarray(y).astype(int)
+    n1, n0 = int(y.sum()), int((1 - y).sum())
+    if n1 == 0 or n0 == 0:
+        return float("nan")
+    r = pd.Series(score).rank().values
+    return (r[y == 1].sum() - n1 * (n1 + 1) / 2) / (n1 * n0)
 
-    def levels(col, ref, last=None):
-        cnt = cs[col].value_counts()
-        mid = [k for k in cnt.index if k != ref and k != last]
-        return ([ref] if ref in cnt.index else []) + mid + ([last] if last in cnt.index else [])
 
-    def smd_cont(a, b):
-        pooled = np.sqrt((a.std() ** 2 + b.std() ** 2) / 2)
-        return np.nan if pooled == 0 else (a.mean() - b.mean()) / pooled
+def _auprc(y, score):
+    y = np.asarray(y).astype(int)
+    if y.sum() == 0:
+        return float("nan")
+    ys = y[np.argsort(-np.asarray(score, dtype=float))]
+    prec = np.cumsum(ys) / np.arange(1, len(ys) + 1)
+    return float((prec * ys).sum() / ys.sum())
 
-    def smd_prop(p1, p2):
-        pooled = np.sqrt((p1 * (1 - p1) + p2 * (1 - p2)) / 2)
-        return np.nan if pooled == 0 else (p1 - p2) / pooled
 
-    def smd_cell(v):
-        return ["—" if not np.isfinite(v) else f"{abs(v):.2f}"]
+def _binary(y, yhat):
+    y, yhat = np.asarray(y).astype(int), np.asarray(yhat).astype(int)
+    tp = int(((y == 1) & (yhat == 1)).sum())
+    fp = int(((y == 0) & (yhat == 1)).sum())
+    fn = int(((y == 1) & (yhat == 0)).sum())
+    tn = int(((y == 0) & (yhat == 0)).sum())
+    sens = tp / (tp + fn) if tp + fn else float("nan")
+    spec = tn / (tn + fp) if tn + fp else float("nan")
+    prec = tp / (tp + fp) if tp + fp else float("nan")
+    f1 = (2 * prec * sens / (prec + sens)
+          if prec and sens and np.isfinite(prec + sens) else float("nan"))
+    return dict(TP=tp, FP=fp, FN=fn, TN=tn, sensitivity=sens, specificity=spec,
+                precision=prec, f1=f1, balanced_acc=(sens + spec) / 2)
+
+
+def wilson(k, n, z=1.959964):
+    if n == 0:
+        return (float("nan"),) * 3
+    p = k / n
+    d = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / d
+    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
+    return p, c - h, c + h
+
+
+def metrics(y_true, y_hat, score):
+    m = _binary(y_true, y_hat)
+    _, m["sens_lo"], m["sens_hi"] = wilson(m["TP"], m["TP"] + m["FN"])
+    _, m["prec_lo"], m["prec_hi"] = wilson(m["TP"], m["TP"] + m["FP"])
+    m["flags"] = m["TP"] + m["FP"]
+    m["auc"] = _auc(y_true, score)
+    m["auprc"] = _auprc(y_true, score)
+    m["prevalence"] = float(np.mean(y_true))
+    m["n"] = int(len(y_true))
+    return m
+
+
+# --------------------------------------------------------------------------- #
+# Early-warning classification (Table 2)
+# --------------------------------------------------------------------------- #
+def main(q=Q_DEFAULT):
+    common, _ = get_common_sample()
+    _, test = time_split(common)
+    test = test.reset_index(drop=True)
+    preds = pd.read_csv(os.path.join(OUT_DIR, "reg_preds_all.csv"))
+    c_thr, p_thr = thresholds(common, q)
+
+    keys = [(m, f) for m in MODELS for f in (["—"] if m == "Naive persistence" else FSETS)]
+    wide = {}
+    for target in ("y_density", "y_posrate"):
+        for m, f in keys:
+            d = preds[(preds.target == target) & (preds.model == m) & (preds.features == f)]
+            d = d.sort_values("row")
+            if len(d) != len(test) or not np.allclose(d["obs"].values, test[target].values):
+                raise RuntimeError(f"Predictions for {target}/{m}/{f} do not match the test set")
+            wide[(target, m, f)] = d["pred"].values
+
+    cur_q = quadrant(test["density"], test["distribution"], c_thr, p_thr)
+    nxt_q = quadrant(test["y_density"], test["y_posrate"], c_thr, p_thr)
+    ctrl = cur_q == "Controlled"
 
     rows = []
+    for m, f in keys:
+        pc, pp = wide[("y_density", m, f)], wide[("y_posrate", m, f)]
+        pred_q = quadrant(pc, pp, c_thr, p_thr)
+        tasks = [
+            ("C. Established next",
+             (nxt_q == "Established").astype(int),
+             (pred_q == "Established").astype(int),
+             np.minimum(pd.Series(pc).rank(pct=True).values,
+                        pd.Series(pp).rank(pct=True).values)),
+            ("D. Leaves Controlled next (currently Controlled only)",
+             (nxt_q[ctrl] != "Controlled").astype(int),
+             (pred_q[ctrl] != "Controlled").astype(int),
+             np.maximum(pd.Series(pc[ctrl]).rank(pct=True).values,
+                        pd.Series(pp[ctrl]).rank(pct=True).values)),
+        ]
+        for name, y, yhat, score in tasks:
+            r = metrics(y, yhat, score)
+            r.update(task=name, model=m, features=f)
+            rows.append(r)
 
-    def cont_row(label, col, skewed=False):
-        cells = [label]
-        for g in groups:
-            s = g[col]
-            cells.append(f"{s.median():.2f} [{s.quantile(.25):.2f}–{s.quantile(.75):.2f}]"
-                         if skewed else f"{s.mean():.1f} ± {s.std():.1f}")
-        rows.append(body(cells + smd_cell(smd_cont(train[col], test[col]))))
-
-    def prop_row(label, mask_fn):
-        cells, props = [label], []
-        for g in groups:
-            n = int(mask_fn(g).sum())
-            props.append(n / len(g))
-            cells.append(f"{n:,} ({100 * n / len(g):.1f}%)")
-        rows.append(body(cells + smd_cell(smd_prop(*props))))
-
-    rows.append(section("Sample", 4))
-    rows.append(body(["Transitions, <i>n</i>", f"{len(train):,}", f"{len(test):,}", ""]))
-    rows.append(body(["Establishments, <i>n</i>", f"{train['cid'].nunique()}",
-                      f"{test['cid'].nunique()}", ""]))
-    rows.append(section("Outcomes (next period)", 4))
-    cont_row(f"Capture rate<sup>{DAGGER}</sup>", "y_density", skewed=True)
-    cont_row(f"Positive rate<sup>{DAGGER}</sup>", "y_posrate", skewed=True)
-    rows.append(section("Monitoring and environmental predictors", 4))
-    cont_row(f"Current capture rate<sup>{DAGGER}</sup>", "density", skewed=True)
-    cont_row(f"Current positive rate<sup>{DAGGER}</sup>", "distribution", skewed=True)
-    cont_row("Mean outdoor temperature (°C)", "temp")
-    cont_row("Humidity (mean RH, %)", "humidity")
-    for title, items in ((f"Facility audit items<sup>{DDAGGER}</sup>", FACILITY_ITEMS),
-                         (f"Sanitation audit items<sup>{DDAGGER}</sup>", SANITATION_ITEMS)):
-        rows.append(section(title, 4))
-        for c in items:
-            prop_row(ITEM_LABELS[c], lambda g, c=c: g[c] > 0)
-    rows.append(section("Business type", 4))
-    for b in levels("business", "迴轉壽司店"):
-        prop_row(tr(b), lambda g, b=b: g["business"] == b)
-    rows.append(section("Building type", 4))
-    prop_row("In-mall / department store", lambda g: g["building"] == "y")
-    prop_row("Standalone / street-level", lambda g: g["building"] == "n")
-    rows.append(section("Region", 4))
-    for r in levels("region", "臺北市", last="Other city"):
-        prop_row(tr(r), lambda g, r=r: g["region"] == r)
-    rows.append(section("Calendar month", 4))
-    for m in range(1, 13):
-        prop_row(mon[m - 1], lambda g, m=m: g["month"] == m)
-
-    header = [[{"t": "Characteristic", "align": "l"},
-               {"t": f"Training set\n(<i>n</i> = {len(train):,})"},
-               {"t": f"Test set\n(<i>n</i> = {len(test):,})"},
-               {"t": "SMD"}]]
-    notes = [
-        "Values are <i>n</i> (%) for categorical variables and mean ± SD for continuous "
-        "variables. RH, relative humidity; SD, standard deviation; SMD, absolute standardized "
-        "mean difference.",
-        f"<sup>{DAGGER}</sup> Median [interquartile range].",
-        f"<sup>{DDAGGER}</sup> Number (%) of periods with ≥ 1 recorded deficiency.",
-    ]
-    add_table(doc, label=LABEL_CHAR,
-              caption=f"Characteristics of the training and held-out test sets "
-                      f"(<i>N</i> = {len(cs):,} establishment-period transitions from "
-                      f"{cs['cid'].nunique()} establishments)",
-              header=header, rows=rows, widths=[7.4, 4.0, 4.0, 1.6],
-              notes=notes, landscape=False, new_page=False, caption_bold=True)
-
-
-# --------------------------------------------------------------------------- #
-# Table S6: GLMM drivers of next-period activity
-# --------------------------------------------------------------------------- #
-SEASON_LABELS = {"Spring": "Spring", "Summer": "Summer", "Autumn": "Autumn"}
-REGION_LABELS = {"Taichung": "Taichung", "NewTaipei": "New Taipei", "Nantou": "Nantou",
-                 "Kaohsiung": "Kaohsiung", "HsinchuCity": "Hsinchu City",
-                 "Taoyuan": "Taoyuan", "Tainan": "Tainan", "OtherCity": "Other city"}
-BIZ_LABELS = {"Bakery": "Bakery", "Western": "Western-style", "HotPot": "Hot-pot",
-              "Ramen": "Ramen", "Cafe": "Café", "Other": "Other",
-              "Japanese": "Japanese", "Chinese": "Chinese"}
-CONT_TERMS = [
-    ("Current capture rate (per +0.10 captures trap<sup>−1</sup> day<sup>−1</sup>)", "density_u10"),
-    ("Current positive rate (per +0.10)", "distribution_u10"),
-    ("Mean outdoor temperature (per +1 °C)", "temp"),
-    ("Humidity (per +1% RH)", "humidity"),
-]
-
-
-def table2_drivers(doc):
-    cap = load("glmm_capture.csv")
-    pos = load("glmm_posrate.csv")
-    meta = load("glmm_meta.csv")
-
-    def pfmt(p):
-        return ("< 0.001" if p < 0.001 else f"{p:.3f}") + ("*" if p < 0.05 else "")
-
-    def eff(e, lo, hi):
-        if round(lo, 2) == 1.00 or round(hi, 2) == 1.00:
-            return f"{e:.3f} ({lo:.3f}–{hi:.3f})"
-        return f"{e:.2f} ({lo:.2f}–{hi:.2f})"
-
-    def cells(df, term):
-        r = df[df.term == term]
-        if not len(r):
-            return "—", "—", "—"
-        r = r.iloc[0]
-        return (f"{r.coef:+.3f}".replace("-", MINUS), eff(r.eff, r.lo, r.hi), pfmt(r.p))
-
-    def bold_cols(term):
-        cols = []
-        for df, idx in ((cap, [1, 2, 3]), (pos, [4, 5, 6])):
-            r = df[df.term == term]
-            if len(r) and np.isfinite(r.p.values[0]) and float(r.p.values[0]) < 0.05:
-                cols += idx
-        return cols or False
-
-    rows = []
-
-    def term_row(label, term, indent):
-        rows.append(body([label, *cells(cap, term), *cells(pos, term)],
-                         indent=indent, bold=bold_cols(term)))
-
-    def ref(label):
-        rows.append(body([label, "0 (ref)", "1.00 (ref)", "—", "0 (ref)", "1.00 (ref)", "—"]))
-
-    def levels(prefix, preferred):
-        present = [t[len(prefix):] for t in cap["term"].astype(str)
-                   if t.startswith(prefix) and len(t) > len(prefix)]
-        return [k for k in preferred if k in present]
-
-    rows.append(section("Monitoring indices and environment", 7))
-    for lab, term in CONT_TERMS:
-        term_row(lab, term, indent=False)
-    present = set(cap["term"].astype(str))
-    for title, items in (("Facility deficiencies (per +1 recorded instance)", FACILITY_ITEMS),
-                         ("Sanitation deficiencies (per +1 recorded instance)", SANITATION_ITEMS)):
-        rows.append(section(title, 7))
-        for c in items:
-            if c in present:
-                term_row(ITEM_LABELS[c], c, indent=False)
-    for title, ref_label, prefix, labels in (
-            ("Season (ref: Winter)", "Winter", "season", SEASON_LABELS),
-            ("Region (ref: Taipei)", "Taipei", "region", REGION_LABELS),
-            ("Business type (ref: Conveyor-belt sushi)", "Conveyor-belt sushi", "business",
-             BIZ_LABELS)):
-        rows.append(section(title, 7))
-        ref(ref_label)
-        for key in levels(prefix, list(labels)):
-            term_row(labels[key], f"{prefix}{key}", indent=True)
-    rows.append(section("Building type (ref: In-mall / department store)", 7))
-    ref("In-mall / department store")
-    term_row("Standalone / street-level", "buildingStandalone", indent=True)
-
-    mc = meta[meta.model.str.contains("capture")].iloc[0]
-    mp = meta[meta.model.str.contains("posrate")].iloc[0]
-    rows.append(section("Random effect and dispersion", 7))
-    rows.append(body(["Intercept SD (<i>σ</i>)", f"{mc.sigma_u:.2f}", "—", "—",
-                      f"{mp.sigma_u:.2f}", "—", "—"]))
-    rows.append(body(["Intraclass correlation (ICC)", f"{mc.icc:.2f}", "—", "—",
-                      f"{mp.icc:.2f}", "—", "—"]))
-    rows.append(body(["Tweedie power parameter", f"{mc.tweedie_p:.2f}", "—", "—",
-                      "—", "—", "—"]))
-    rows.append(body(["Dispersion parameter (<i>φ</i>)", f"{mc.phi:.3f}", "—", "—",
-                      "—", "—", "—"]))
-
-    header = [
-        [{"t": "Predictor", "align": "l", "vmerge": True},
-         {"t": f"Capture rate<sup>{DAGGER}</sup>", "span": 3, "rule": True},
-         {"t": f"Positive rate<sup>{DDAGGER}</sup>", "span": 3, "rule": True}],
-        [{"t": ""},
-         {"t": "<i>β</i>"}, {"t": "exp(<i>β</i>) (95% CI)"}, {"t": "<i>P</i>"},
-         {"t": "<i>β</i>"}, {"t": "exp(<i>β</i>) (95% CI)"}, {"t": "<i>P</i>"}],
-    ]
-    notes = [
-        "Bold values and * indicate <i>P</i> < 0.05 (unadjusted). CI, confidence interval; "
-        "ICC, intraclass correlation coefficient; ref, reference category; RH, relative "
-        "humidity; SD, standard deviation.",
-        f"<sup>{DAGGER}</sup> Tweedie, log link; exp(<i>β</i>), ratio of means.",
-        f"<sup>{DDAGGER}</sup> Binomial, logit link; exp(<i>β</i>), odds ratio.",
-    ]
-    add_table(doc, label=LABEL_GLMM,
-              caption=f"Factors associated with next-period cockroach activity in generalized "
-                      f"linear mixed models (<i>N</i> = {int(meta['n_obs'].max()):,} "
-                      f"establishment-periods from {int(meta['n_group'].max())} establishments, "
-                      f"training period)",
-              header=header, rows=rows, widths=[6.9, 2.0, 4.4, 1.9, 2.0, 4.4, 1.9],
-              notes=notes, landscape=True, new_page=True, caption_bold=True)
-
-
-# --------------------------------------------------------------------------- #
-# Table 1: regression performance
-# --------------------------------------------------------------------------- #
-def table3_regression(doc):
-    perf = load("perf_extended.csv")
-    metrics = ["r2", "rmse", "mae", "bias"]
-    k = len(metrics)
-
-    def get(target, model, fset, metric):
-        r = perf[(perf.target == target) & (perf.model == model) & (perf.features == fset)]
-        return float(r[metric].values[0])
-
-    def fmt(v, metric):
-        s = f"{v:+.3f}" if metric == "bias" else f"{v:.3f}"
-        return s.replace("-", MINUS)
-
-    specs = [(NAIVE_KEY, "—")] + [(m, f) for m in ("GLM", "Random Forest", "XGBoost")
-                                  for f in ("Baseline", "Enhanced")]
-    raw = [[get(t, m, f, met) for t in ("y_density", "y_posrate") for met in metrics]
-           for m, f in specs]
-
-    best = set()
-    for j in range(2 * k):
-        met = metrics[j % k]
-        cand = [(i, round(raw[i][j], 3)) for i in range(1, len(raw)) if np.isfinite(raw[i][j])]
-        key = ((lambda t: -t[1]) if met == "r2" else
-               (lambda t: abs(t[1])) if met == "bias" else (lambda t: t[1]))
-        top = key(min(cand, key=key))
-        best |= {(i, j + 2) for i, v in cand if key((i, v)) == top}
-
-    rows = []
-    for i, ((m, f), vals) in enumerate(zip(specs, raw)):
-        label = NAIVE_LABEL if m == NAIVE_KEY else MODEL_DISPLAY.get(m, m)
-        if i >= 1 and i % 2 == 0:
-            label = ""
-        rows.append(body([label, f] + [fmt(v, metrics[j % k]) for j, v in enumerate(vals)],
-                         indent=False, bold=[c for c in range(2 + 2 * k) if (i, c) in best]))
-
-    sub = [{"t": "<i>R</i>²"}, {"t": "RMSE"}, {"t": "MAE"}, {"t": f"Bias<sup>{DAGGER}</sup>"}]
-    header = [
-        [{"t": "Model", "align": "l", "vmerge": True},
-         {"t": "Feature set", "vmerge": True},
-         {"t": "Next capture rate (captures trap<sup>−1</sup> day<sup>−1</sup>)",
-          "span": k, "rule": True},
-         {"t": "Next positive rate", "span": k, "rule": True}],
-        [{"t": ""}, {"t": ""}] + sub + sub,
-    ]
-    pr = load("reg_preds.csv")
-    n_test = int(((pr.target == "y_density") & (pr.model == NAIVE_KEY)).sum())
-    notes = [
-        "Bold values indicate the best performance among fitted models (naïve persistence "
-        "excluded).",
-        f"<sup>{DAGGER}</sup> Mean of (predicted − observed); best, closest to 0.",
-        "GLM, generalized linear model; MAE, mean absolute error; RMSE, root mean squared "
-        "error.",
-    ]
-    add_table(doc, label=LABEL_REG,
-              caption=f"Predictive performance of Baseline and Enhanced feature sets for "
-                      f"next-period cockroach activity in the held-out test set "
-                      f"(<i>N</i> = {n_test:,})",
-              header=header, rows=rows, widths=[2.8, 1.9] + [1.5] * 8,
-              notes=notes, landscape=False, new_page=False, caption_bold=True)
-
-
-# --------------------------------------------------------------------------- #
-# Table 2: early-warning classification
-# --------------------------------------------------------------------------- #
-CLS_TASKS = [
-    ("C. Established next", "Established vs not Established, next period"),
-    ("D. Leaves Controlled next", "Leaving vs remaining in Controlled, next period "
-                                  "(currently Controlled only)"),
-]
-CLS_MODELS = [(NAIVE_KEY, "—"), ("GLM", "Baseline"), ("GLM", "Enhanced"),
-              ("Random Forest", "Baseline"), ("Random Forest", "Enhanced"),
-              ("XGBoost", "Baseline"), ("XGBoost", "Enhanced")]
-BOLD_COLS = (2, 3, 7)
-
-
-def _merge_section_rows(tbl, n_head, rows):
-    ncol = len(tbl.columns)
-    for i, spec in enumerate(rows):
-        if spec.get("section"):
-            m = tbl.cell(n_head + i, 0).merge(tbl.cell(n_head + i, ncol - 1))
-            for extra in m.paragraphs[1:]:
-                extra._element.getparent().remove(extra._element)
-
-
-def table4_classification(doc):
-    cls = load("classification_metrics.csv")
-    cls["features"] = cls["features"].fillna("—").astype(str)
-
-    def num(v):
-        return "—" if not np.isfinite(v) else f"{v:.3f}"
-
-    def ci(v, lo, hi):
-        return "—" if not np.isfinite(v) else f"{v:.3f} ({lo:.3f}–{hi:.3f})"
-
-    rows = []
-    for prefix, title in CLS_TASKS:
-        g = cls[cls["task"].astype(str).str.startswith(prefix)]
-        n, n_ev = int(g["n"].iloc[0]), int(g["TP"].iloc[0] + g["FN"].iloc[0])
-        rows.append(section(f"{title}: <i>n</i> = {n:,}, events = {n_ev:,} "
-                            f"({100 * n_ev / n:.1f}%)", 8))
-        block = []
-        for model, fset in CLS_MODELS:
-            r = g[(g.model == model) & (g.features == fset)].iloc[0]
-            label = NAIVE_LABEL if model == NAIVE_KEY else MODEL_DISPLAY.get(model, model)
-            block.append([label, fset, num(float(r["auc"])), num(float(r["auprc"])),
-                          ci(float(r["sensitivity"]), float(r["sens_lo"]), float(r["sens_hi"])),
-                          ci(float(r["precision"]), float(r["prec_lo"]), float(r["prec_hi"])),
-                          num(float(r["specificity"])), num(float(r["f1"]))])
-        best = set()
-        for j in BOLD_COLS:
-            cand = [(i, float(block[i][j].split(" ")[0])) for i in range(1, len(block))
-                    if block[i][j] != "—"]
-            top = max(v for _, v in cand)
-            best |= {(i, j) for i, v in cand if v == top}
-        for i, cells in enumerate(block):
-            if i >= 1 and i % 2 == 0:
-                cells[0] = ""
-            rows.append(body(cells, indent=False, bold=[c for c in range(8) if (i, c) in best]))
-
-    header = [[{"t": "Model", "align": "l"}, {"t": "Feature set"}, {"t": "AUC"},
-               {"t": "AUPRC"}, {"t": "Sensitivity\n(95% CI)"}, {"t": "Precision\n(95% CI)"},
-               {"t": "Specificity"}, {"t": "F1"}]]
-    notes = [
-        "Bold values indicate the best AUC, AUPRC and F1 among fitted models (naïve "
-        "persistence excluded).",
-        "AUC, area under the receiver operating characteristic curve; AUPRC, area under the "
-        "precision–recall curve; CI, confidence interval; GLM, generalized linear model.",
-    ]
-    doc.add_paragraph().paragraph_format.space_before = Pt(14)
-    tbl = add_table(doc, label=LABEL_CLS,
-                    caption="Early-warning classification performance for next-period "
-                            "cockroach risk states in the held-out test set",
-                    header=header, rows=rows, widths=[2.8, 1.7, 1.1, 1.6, 3.2, 3.2, 1.85, 1.1],
-                    notes=notes, landscape=False, new_page=False, caption_bold=True)
-    _merge_section_rows(tbl, len(header), rows)
-
-
-def main():
-    doc = new_document()
-    table3_regression(doc)          # Table 1
-    table4_classification(doc)      # Table 2
-    out = os.path.join(OUT, "Tables_1-2.docx")
-    doc.save(out)
-    print(f"Main-text tables saved to {out}")
-
-    doc = new_document()
-    table1_sample_characteristics(doc)   # Table S5
-    table2_drivers(doc)                  # Table S6
-    out = os.path.join(OUT, "Tables_S5-S6.docx")
-    doc.save(out)
-    print(f"Supporting Information tables saved to {out}")
+    out = pd.DataFrame(rows)[
+        ["task", "model", "features", "n", "prevalence", "auc", "auprc",
+         "sensitivity", "sens_lo", "sens_hi", "precision", "prec_lo", "prec_hi",
+         "specificity", "f1", "balanced_acc", "flags", "TP", "FP", "FN", "TN"]]
+    out.to_csv(os.path.join(OUT_DIR, "classification_metrics.csv"), index=False)
+    print(out[["task", "model", "features", "auc", "auprc", "sensitivity", "precision", "f1"]]
+          .round(3).to_string(index=False))
 
 
 if __name__ == "__main__":

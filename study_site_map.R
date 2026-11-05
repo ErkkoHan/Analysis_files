@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Fig. 1a study-site map. Requires establishment coordinates (lat, lng), which
+# Fig. 1(A) study-site map. Requires establishment coordinates (lat, lng), which
 # are not included in the public data; run export_analysis_sites.py first.
 
 suppressPackageStartupMessages({

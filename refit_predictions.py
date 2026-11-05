@@ -33,7 +33,7 @@ def metrics_with_bias(y, mu):
 
 
 # --------------------------------------------------------------------------- #
-# Test-set predictions with bias (Table 3)
+# Test-set predictions with bias (Table 1)
 # --------------------------------------------------------------------------- #
 def main():
     load_tuned_params()

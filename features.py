@@ -68,7 +68,7 @@ def read_data(path=None):
     if not os.path.exists(src):
         raise FileNotFoundError(
             f"Data file not found: {src}\n"
-            "Place ESM.xlsx (Online Resource) in the dataset/ folder.")
+            "Save the Supporting Information workbook as dataset/ESM.xlsx.")
     df = _read_esm(src) if src.lower().endswith(".xlsx") else _read_csv(src)
     if not _REPORTED:
         _REPORTED.append(src)

@@ -72,7 +72,7 @@ def metrics(y_true, y_hat, score):
 
 
 # --------------------------------------------------------------------------- #
-# Early-warning classification (Table 4)
+# Early-warning classification (Table 2)
 # --------------------------------------------------------------------------- #
 def main(q=Q_DEFAULT):
     common, _ = get_common_sample()
