@@ -12,6 +12,12 @@ NAIVE_KEY = "Naive persistence"
 NAIVE_LABEL = "Naïve persistence"
 MODEL_DISPLAY = {"Random Forest": "Random forest"}
 MINUS = "−"
+DAGGER, DDAGGER, SECT = "\u2020", "\u2021", "\u00a7"   # PMS table footnote symbols
+
+# Main text: Table 1 (prediction error), Table 2 (early warning).
+# Supporting Information: Table S5 (sample characteristics), Table S6 (GLMM).
+LABEL_REG, LABEL_CLS = "Table 1", "Table 2"
+LABEL_CHAR, LABEL_GLMM = "Table S5", "Table S6"
 
 
 def body(cells, indent=True, bold=False):
@@ -23,7 +29,7 @@ def section(title, ncol):
 
 
 # --------------------------------------------------------------------------- #
-# Table 1: training vs test set characteristics
+# Table S5: training vs test set characteristics
 # --------------------------------------------------------------------------- #
 def table1_sample_characteristics(doc):
     df, tiers = build_features()
@@ -73,15 +79,15 @@ def table1_sample_characteristics(doc):
     rows.append(body(["Establishments, <i>n</i>", f"{train['cid'].nunique()}",
                       f"{test['cid'].nunique()}", ""]))
     rows.append(section("Outcomes (next period)", 4))
-    cont_row("Capture rate<sup>a</sup>", "y_density", skewed=True)
-    cont_row("Positive rate<sup>a</sup>", "y_posrate", skewed=True)
+    cont_row(f"Capture rate<sup>{DAGGER}</sup>", "y_density", skewed=True)
+    cont_row(f"Positive rate<sup>{DAGGER}</sup>", "y_posrate", skewed=True)
     rows.append(section("Monitoring and environmental predictors", 4))
-    cont_row("Current capture rate<sup>a</sup>", "density", skewed=True)
-    cont_row("Current positive rate<sup>a</sup>", "distribution", skewed=True)
+    cont_row(f"Current capture rate<sup>{DAGGER}</sup>", "density", skewed=True)
+    cont_row(f"Current positive rate<sup>{DAGGER}</sup>", "distribution", skewed=True)
     cont_row("Mean outdoor temperature (°C)", "temp")
     cont_row("Humidity (mean RH, %)", "humidity")
-    for title, items in (("Facility audit items<sup>b</sup>", FACILITY_ITEMS),
-                         ("Sanitation audit items<sup>b</sup>", SANITATION_ITEMS)):
+    for title, items in ((f"Facility audit items<sup>{DDAGGER}</sup>", FACILITY_ITEMS),
+                         (f"Sanitation audit items<sup>{DDAGGER}</sup>", SANITATION_ITEMS)):
         rows.append(section(title, 4))
         for c in items:
             prop_row(ITEM_LABELS[c], lambda g, c=c: g[c] > 0)
@@ -106,19 +112,19 @@ def table1_sample_characteristics(doc):
         "Values are <i>n</i> (%) for categorical variables and mean ± SD for continuous "
         "variables. RH, relative humidity; SD, standard deviation; SMD, absolute standardized "
         "mean difference.",
-        "<sup>a</sup>Median [interquartile range].",
-        "<sup>b</sup>Number (%) of periods with ≥ 1 recorded deficiency.",
+        f"<sup>{DAGGER}</sup> Median [interquartile range].",
+        f"<sup>{DDAGGER}</sup> Number (%) of periods with ≥ 1 recorded deficiency.",
     ]
-    add_table(doc, label="Table 1",
+    add_table(doc, label=LABEL_CHAR,
               caption=f"Characteristics of the training and held-out test sets "
                       f"(<i>N</i> = {len(cs):,} establishment-period transitions from "
                       f"{cs['cid'].nunique()} establishments)",
               header=header, rows=rows, widths=[7.4, 4.0, 4.0, 1.6],
-              notes=notes, landscape=False, new_page=False)
+              notes=notes, landscape=False, new_page=False, caption_bold=True)
 
 
 # --------------------------------------------------------------------------- #
-# Table 2: GLMM drivers of next-period activity
+# Table S6: GLMM drivers of next-period activity
 # --------------------------------------------------------------------------- #
 SEASON_LABELS = {"Spring": "Spring", "Summer": "Summer", "Autumn": "Autumn"}
 REGION_LABELS = {"Taichung": "Taichung", "NewTaipei": "New Taipei", "Nantou": "Nantou",
@@ -214,8 +220,8 @@ def table2_drivers(doc):
 
     header = [
         [{"t": "Predictor", "align": "l", "vmerge": True},
-         {"t": "Capture rate<sup>a</sup>", "span": 3, "rule": True},
-         {"t": "Positive rate<sup>b</sup>", "span": 3, "rule": True}],
+         {"t": f"Capture rate<sup>{DAGGER}</sup>", "span": 3, "rule": True},
+         {"t": f"Positive rate<sup>{DDAGGER}</sup>", "span": 3, "rule": True}],
         [{"t": ""},
          {"t": "<i>β</i>"}, {"t": "exp(<i>β</i>) (95% CI)"}, {"t": "<i>P</i>"},
          {"t": "<i>β</i>"}, {"t": "exp(<i>β</i>) (95% CI)"}, {"t": "<i>P</i>"}],
@@ -224,20 +230,20 @@ def table2_drivers(doc):
         "Bold values and * indicate <i>P</i> < 0.05 (unadjusted). CI, confidence interval; "
         "ICC, intraclass correlation coefficient; ref, reference category; RH, relative "
         "humidity; SD, standard deviation.",
-        "<sup>a</sup>Tweedie, log link; exp(<i>β</i>), ratio of means.",
-        "<sup>b</sup>Binomial, logit link; exp(<i>β</i>), odds ratio.",
+        f"<sup>{DAGGER}</sup> Tweedie, log link; exp(<i>β</i>), ratio of means.",
+        f"<sup>{DDAGGER}</sup> Binomial, logit link; exp(<i>β</i>), odds ratio.",
     ]
-    add_table(doc, label="Table 2",
+    add_table(doc, label=LABEL_GLMM,
               caption=f"Factors associated with next-period cockroach activity in generalized "
                       f"linear mixed models (<i>N</i> = {int(meta['n_obs'].max()):,} "
                       f"establishment-periods from {int(meta['n_group'].max())} establishments, "
                       f"training period)",
               header=header, rows=rows, widths=[6.9, 2.0, 4.4, 1.9, 2.0, 4.4, 1.9],
-              notes=notes, landscape=True, new_page=True)
+              notes=notes, landscape=True, new_page=True, caption_bold=True)
 
 
 # --------------------------------------------------------------------------- #
-# Table 3: regression performance
+# Table 1: regression performance
 # --------------------------------------------------------------------------- #
 def table3_regression(doc):
     perf = load("perf_extended.csv")
@@ -274,11 +280,12 @@ def table3_regression(doc):
         rows.append(body([label, f] + [fmt(v, metrics[j % k]) for j, v in enumerate(vals)],
                          indent=False, bold=[c for c in range(2 + 2 * k) if (i, c) in best]))
 
-    sub = [{"t": "<i>R</i>²"}, {"t": "RMSE"}, {"t": "MAE"}, {"t": "Bias<sup>a</sup>"}]
+    sub = [{"t": "<i>R</i>²"}, {"t": "RMSE"}, {"t": "MAE"}, {"t": f"Bias<sup>{DAGGER}</sup>"}]
     header = [
         [{"t": "Model", "align": "l", "vmerge": True},
          {"t": "Feature set", "vmerge": True},
-         {"t": "Next capture rate", "span": k, "rule": True},
+         {"t": "Next capture rate (captures trap<sup>−1</sup> day<sup>−1</sup>)",
+          "span": k, "rule": True},
          {"t": "Next positive rate", "span": k, "rule": True}],
         [{"t": ""}, {"t": ""}] + sub + sub,
     ]
@@ -286,20 +293,21 @@ def table3_regression(doc):
     n_test = int(((pr.target == "y_density") & (pr.model == NAIVE_KEY)).sum())
     notes = [
         "Bold values indicate the best performance among fitted models (naïve persistence "
-        "excluded). GLM, generalized linear model; MAE, mean absolute error; RMSE, root mean "
-        "squared error.",
-        "<sup>a</sup>Mean of (predicted − observed); best, closest to 0.",
+        "excluded).",
+        f"<sup>{DAGGER}</sup> Mean of (predicted − observed); best, closest to 0.",
+        "GLM, generalized linear model; MAE, mean absolute error; RMSE, root mean squared "
+        "error.",
     ]
-    add_table(doc, label="Table 3",
+    add_table(doc, label=LABEL_REG,
               caption=f"Predictive performance of Baseline and Enhanced feature sets for "
                       f"next-period cockroach activity in the held-out test set "
                       f"(<i>N</i> = {n_test:,})",
               header=header, rows=rows, widths=[2.8, 1.9] + [1.5] * 8,
-              notes=notes, landscape=False, new_page=True)
+              notes=notes, landscape=False, new_page=False, caption_bold=True)
 
 
 # --------------------------------------------------------------------------- #
-# Table 4: early-warning classification
+# Table 2: early-warning classification
 # --------------------------------------------------------------------------- #
 CLS_TASKS = [
     ("C. Established next", "Established vs not Established, next period"),
@@ -361,28 +369,33 @@ def table4_classification(doc):
                {"t": "Specificity"}, {"t": "F1"}]]
     notes = [
         "Bold values indicate the best AUC, AUPRC and F1 among fitted models (naïve "
-        "persistence excluded). AUC, area under the receiver operating characteristic curve; "
-        "AUPRC, area under the precision–recall curve; CI, confidence interval; GLM, "
-        "generalized linear model.",
+        "persistence excluded).",
+        "AUC, area under the receiver operating characteristic curve; AUPRC, area under the "
+        "precision–recall curve; CI, confidence interval; GLM, generalized linear model.",
     ]
     doc.add_paragraph().paragraph_format.space_before = Pt(14)
-    tbl = add_table(doc, label="Table 4",
+    tbl = add_table(doc, label=LABEL_CLS,
                     caption="Early-warning classification performance for next-period "
                             "cockroach risk states in the held-out test set",
-                    header=header, rows=rows, widths=[3.1, 1.7, 1.2, 1.6, 2.9, 2.9, 1.85, 1.1],
-                    notes=notes, landscape=False, new_page=False)
+                    header=header, rows=rows, widths=[2.8, 1.7, 1.1, 1.6, 3.2, 3.2, 1.85, 1.1],
+                    notes=notes, landscape=False, new_page=False, caption_bold=True)
     _merge_section_rows(tbl, len(header), rows)
 
 
 def main():
     doc = new_document()
-    table1_sample_characteristics(doc)
-    table2_drivers(doc)
-    table3_regression(doc)
-    table4_classification(doc)
-    out = os.path.join(OUT, "Tables_1-4.docx")
+    table3_regression(doc)          # Table 1
+    table4_classification(doc)      # Table 2
+    out = os.path.join(OUT, "Tables_1-2.docx")
     doc.save(out)
-    print(f"Tables saved to {out}")
+    print(f"Main-text tables saved to {out}")
+
+    doc = new_document()
+    table1_sample_characteristics(doc)   # Table S5
+    table2_drivers(doc)                  # Table S6
+    out = os.path.join(OUT, "Tables_S5-S6.docx")
+    doc.save(out)
+    print(f"Supporting Information tables saved to {out}")
 
 
 if __name__ == "__main__":

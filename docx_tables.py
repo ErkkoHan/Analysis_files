@@ -165,15 +165,16 @@ def new_document(margin_cm=2.0):
 
 
 def add_table(doc, *, label, caption, header, rows, widths,
-              notes=(), landscape=False, new_page=True, margin_cm=2.0):
+              notes=(), landscape=False, new_page=True, margin_cm=2.0,
+              caption_bold=False):
     sec = doc.add_section(WD_SECTION.NEW_PAGE) if new_page else doc.sections[-1]
     _page(sec, landscape=landscape, margin_cm=margin_cm)
 
     p = doc.add_paragraph()
     p.paragraph_format.space_after = Pt(5)
-    _runs(p, label.rstrip(".") + ".", bold=True, size=TITLE_PT)
-    cap = caption.rstrip()
-    _runs(p, " " + (cap if cap.endswith(".") else cap + "."), bold=False, size=TITLE_PT)
+    # Pest Management Science: "Table 1 Title", no full stops
+    _runs(p, label.rstrip("."), bold=True, size=TITLE_PT)
+    _runs(p, " " + caption.rstrip().rstrip("."), bold=caption_bold, size=TITLE_PT)
 
     ncol = len(widths)
     tbl = doc.add_table(rows=0, cols=ncol)
